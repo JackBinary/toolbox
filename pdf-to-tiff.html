@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF → TIFF Converter</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <style>
+        body {
+            background-color: #fff;
+            min-height: 100vh;
+        }
+
+        .card {
+            border: none;
+            box-shadow: none;
+            min-height: 100vh;
+        }
+
+        .upload-area {
+            border: 3px dashed #dee2e6;
+            border-radius: 0.5rem;
+            padding: 3rem 1.5rem;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            background-color: #fff;
+        }
+
+        .upload-area:hover {
+            border-color: #adb5bd;
+            background-color: #f8f9fa;
+        }
+
+        .upload-area.dragover {
+            border-color: #0d6efd;
+            background-color: #e7f1ff;
+        }
+
+        .upload-icon {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+            opacity: 0.7;
+        }
+
+        input[type="file"] {
+            display: none;
+        }
+
+        .settings-panel {
+            background-color: #f8f9fa;
+            border-radius: 0.5rem;
+            padding: 1.25rem;
+        }
+
+        .setting-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .setting-controls {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .form-range {
+            width: 180px;
+        }
+
+        .value-display {
+            min-width: 50px;
+            text-align: right;
+            font-weight: 600;
+            color: #0d6efd;
+        }
+
+        .file-badge {
+            background-color: #e7f1ff;
+            border-left: 3px solid #0d6efd;
+        }
+    </style>
+</head>
+<body>
+    <div class="container-fluid">
+        <div class="row">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-body p-4 p-md-5">
+                        <div class="mx-auto" style="max-width: 800px;">
+                        <h1 class="card-title h3 mb-1">PDF → TIFF Converter</h1>
+                        <p class="text-muted mb-4 small">Upload one or more PDF files. Multi-page PDFs are stacked into one tall image.</p>
+
+                        <div class="upload-area mb-3" id="uploadArea">
+                            <div class="upload-icon">📄</div>
+                            <div class="fw-semibold text-primary mb-1">Click to upload or drag and drop</div>
+                            <div class="text-muted small">PDF files only</div>
+                            <input type="file" id="fileInput" accept=".pdf" multiple>
+                        </div>
+
+                        <div class="settings-panel mb-3">
+                            <div class="setting-row mb-3">
+                                <div>
+                                    <label class="form-label mb-0 fw-semibold">JPEG Quality</label>
+                                    <div class="text-muted small">Higher = larger file, better quality</div>
+                                </div>
+                                <div class="setting-controls">
+                                    <input type="range" class="form-range" id="qualitySlider" min="50" max="100" value="85" step="5">
+                                    <span class="value-display" id="qualityValue">85%</span>
+                                </div>
+                            </div>
+                            <div class="setting-row">
+                                <div>
+                                    <label class="form-label mb-0 fw-semibold">Output DPI</label>
+                                    <div class="text-muted small">Resolution for TIFF metadata</div>
+                                </div>
+                                <div class="setting-controls">
+                                    <input type="range" class="form-range" id="dpiSlider" min="72" max="300" value="150" step="1">
+                                    <span class="value-display" id="dpiValue">150</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div id="fileList" class="mb-3"></div>
+
+                        <div id="statusArea"></div>
+
+                        <button class="btn btn-dark w-100" id="convertBtn" disabled>
+                            Select PDF(s) to Convert
+                        </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+        let selectedFiles = [];
+
+        const uploadArea = document.getElementById('uploadArea');
+        const fileInput = document.getElementById('fileInput');
+        const convertBtn = document.getElementById('convertBtn');
+        const fileList = document.getElementById('fileList');
+        const statusArea = document.getElementById('statusArea');
+        const qualitySlider = document.getElementById('qualitySlider');
+        const qualityValue = document.getElementById('qualityValue');
+        const dpiSlider = document.getElementById('dpiSlider');
+        const dpiValue = document.getElementById('dpiValue');
+
+        qualitySlider.addEventListener('input', (e) => {
+            qualityValue.textContent = e.target.value + '%';
+        });
+
+        dpiSlider.addEventListener('input', (e) => {
+            dpiValue.textContent = e.target.value;
+        });
+
+        uploadArea.addEventListener('click', () => fileInput.click());
+
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragover');
+        });
+
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            
+            const files = Array.from(e.dataTransfer.files).filter(f => f.type === 'application/pdf');
+            if (files.length > 0) {
+                handleFileSelect(files);
+            }
+        });
+
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                handleFileSelect(Array.from(e.target.files));
+            }
+        });
+
+        function handleFileSelect(files) {
+            selectedFiles = files;
+            convertBtn.disabled = false;
+            convertBtn.textContent = 'Convert to TIFF';
+            
+            fileList.innerHTML = files.map(f => `
+                <div class="alert file-badge mb-2">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <span class="fw-semibold small">${f.name}</span>
+                        <span class="text-muted small">${(f.size / 1024 / 1024).toFixed(2)} MB</span>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        convertBtn.addEventListener('click', async () => {
+            if (selectedFiles.length === 0) return;
+            
+            convertBtn.disabled = true;
+            
+            if (selectedFiles.length === 1) {
+                await convertSinglePDF(selectedFiles[0]);
+            } else {
+                await convertMultiplePDFs(selectedFiles);
+            }
+        });
+
+        function setStatus(type, text, progress = null) {
+            const alertClass = type === 'processing' ? 'warning' : type === 'success' ? 'success' : 'danger';
+            let html = `<div class="alert alert-${alertClass}"><div>${text}</div>`;
+            
+            if (progress !== null) {
+                html += `
+                    <div class="progress mt-2" style="height: 6px;">
+                        <div class="progress-bar" style="width: ${progress}%"></div>
+                    </div>
+                `;
+            }
+            html += '</div>';
+            statusArea.innerHTML = html;
+        }
+
+        async function convertSinglePDF(file) {
+            try {
+                setStatus('processing', 'Loading PDF...', 10);
+
+                const arrayBuffer = await file.arrayBuffer();
+                const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+                const numPages = pdf.numPages;
+
+                setStatus('processing', `Rendering ${numPages} page${numPages > 1 ? 's' : ''}...`, 20);
+
+                const canvases = [];
+                let totalHeight = 0;
+                let maxWidth = 0;
+
+                for (let i = 1; i <= numPages; i++) {
+                    const page = await pdf.getPage(i);
+                    const viewport = page.getViewport({ scale: 2.0 });
+                    
+                    const canvas = document.createElement('canvas');
+                    canvas.width = viewport.width;
+                    canvas.height = viewport.height;
+                    maxWidth = Math.max(maxWidth, viewport.width);
+                    totalHeight += viewport.height;
+
+                    const context = canvas.getContext('2d');
+                    await page.render({ canvasContext: context, viewport: viewport }).promise;
+
+                    canvases.push(canvas);
+                    setStatus('processing', `Rendered page ${i} of ${numPages}`, 20 + (i / numPages) * 30);
+                }
+
+                setStatus('processing', 'Stitching pages together...', 50);
+
+                const finalCanvas = document.createElement('canvas');
+                finalCanvas.width = maxWidth;
+                finalCanvas.height = totalHeight;
+                const finalCtx = finalCanvas.getContext('2d');
+
+                finalCtx.fillStyle = 'white';
+                finalCtx.fillRect(0, 0, maxWidth, totalHeight);
+
+                let currentY = 0;
+                for (const canvas of canvases) {
+                    finalCtx.drawImage(canvas, 0, currentY);
+                    currentY += canvas.height;
+                }
+
+                setStatus('processing', 'Compressing with JPEG...', 60);
+
+                const quality = qualitySlider.value / 100;
+                const jpegBlob = await new Promise(resolve => {
+                    finalCanvas.toBlob(resolve, 'image/jpeg', quality);
+                });
+
+                setStatus('processing', 'Creating TIFF container...', 80);
+
+                const jpegArrayBuffer = await jpegBlob.arrayBuffer();
+                const jpegData = new Uint8Array(jpegArrayBuffer);
+                const dpi = parseInt(dpiSlider.value);
+                
+                const tiffData = createTIFF(jpegData, finalCanvas.width, finalCanvas.height, dpi);
+
+                setStatus('processing', 'Preparing download...', 90);
+
+                const tiffBlob = new Blob([tiffData], { type: 'image/tiff' });
+                downloadFile(tiffBlob, file.name.replace('.pdf', '.tif'));
+
+                setStatus('success', `Successfully converted! File size: ${(tiffBlob.size / 1024 / 1024).toFixed(2)} MB`, 100);
+                
+                convertBtn.disabled = false;
+                convertBtn.textContent = 'Convert Another PDF';
+
+            } catch (error) {
+                console.error(error);
+                setStatus('error', 'Conversion failed: ' + error.message);
+                convertBtn.disabled = false;
+            }
+        }
+
+        async function convertMultiplePDFs(files) {
+            try {
+                const results = [];
+                
+                for (let idx = 0; idx < files.length; idx++) {
+                    const file = files[idx];
+                    setStatus('processing', `Converting ${idx + 1} of ${files.length}: ${file.name}...`, (idx / files.length) * 90);
+
+                    const arrayBuffer = await file.arrayBuffer();
+                    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+                    const numPages = pdf.numPages;
+
+                    const canvases = [];
+                    let totalHeight = 0;
+                    let maxWidth = 0;
+
+                    for (let i = 1; i <= numPages; i++) {
+                        const page = await pdf.getPage(i);
+                        const viewport = page.getViewport({ scale: 2.0 });
+                        
+                        const canvas = document.createElement('canvas');
+                        canvas.width = viewport.width;
+                        canvas.height = viewport.height;
+                        maxWidth = Math.max(maxWidth, viewport.width);
+                        totalHeight += viewport.height;
+
+                        const context = canvas.getContext('2d');
+                        await page.render({ canvasContext: context, viewport: viewport }).promise;
+                        canvases.push(canvas);
+                    }
+
+                    const finalCanvas = document.createElement('canvas');
+                    finalCanvas.width = maxWidth;
+                    finalCanvas.height = totalHeight;
+                    const finalCtx = finalCanvas.getContext('2d');
+
+                    finalCtx.fillStyle = 'white';
+                    finalCtx.fillRect(0, 0, maxWidth, totalHeight);
+
+                    let currentY = 0;
+                    for (const canvas of canvases) {
+                        finalCtx.drawImage(canvas, 0, currentY);
+                        currentY += canvas.height;
+                    }
+
+                    const quality = qualitySlider.value / 100;
+                    const jpegBlob = await new Promise(resolve => {
+                        finalCanvas.toBlob(resolve, 'image/jpeg', quality);
+                    });
+
+                    const jpegArrayBuffer = await jpegBlob.arrayBuffer();
+                    const jpegData = new Uint8Array(jpegArrayBuffer);
+                    const dpi = parseInt(dpiSlider.value);
+                    
+                    const tiffData = createTIFF(jpegData, finalCanvas.width, finalCanvas.height, dpi);
+                    results.push({
+                        name: file.name.replace('.pdf', '.tif'),
+                        data: tiffData
+                    });
+                }
+
+                setStatus('processing', 'Creating ZIP file...', 95);
+
+                // Create ZIP using JSZip would be ideal, but we'll make a simple download for each file instead
+                // For a true ZIP, you'd want to import JSZip library
+                
+                // For simplicity, download all files individually
+                for (const result of results) {
+                    const blob = new Blob([result.data], { type: 'image/tiff' });
+                    downloadFile(blob, result.name);
+                    await new Promise(resolve => setTimeout(resolve, 100)); // Small delay between downloads
+                }
+
+                setStatus('success', `Successfully converted ${files.length} files!`, 100);
+                convertBtn.disabled = false;
+                convertBtn.textContent = 'Convert More PDFs';
+
+            } catch (error) {
+                console.error(error);
+                setStatus('error', 'Conversion failed: ' + error.message);
+                convertBtn.disabled = false;
+            }
+        }
+
+        function downloadFile(blob, filename) {
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        function createTIFF(jpegData, width, height, dpi) {
+            // Calculate structure sizes
+            const headerSize = 8;
+            const numEntries = 17; // Increased for YCbCr tags
+            const ifdEntriesSize = 2 + (numEntries * 12) + 4;
+            
+            // Calculate where extra data will be stored
+            let extraDataOffset = headerSize + ifdEntriesSize;
+            
+            // We need to store:
+            // - XResolution rational (8 bytes)
+            // - YResolution rational (8 bytes)  
+            // - YCbCrCoefficients (3 rationals = 24 bytes)
+            // - ReferenceBlackWhite (6 rationals = 48 bytes)
+            const xResOffset = extraDataOffset;
+            const yResOffset = xResOffset + 8;
+            const ycbcrCoeffOffset = yResOffset + 8;
+            const refBWOffset = ycbcrCoeffOffset + 24;
+            const extraDataSize = 8 + 8 + 24 + 48; // 88 bytes total
+            
+            const jpegOffset = headerSize + ifdEntriesSize + extraDataSize;
+            const totalSize = jpegOffset + jpegData.length;
+            
+            const buffer = new ArrayBuffer(totalSize);
+            const view = new DataView(buffer);
+            const bytes = new Uint8Array(buffer);
+
+            // TIFF Header
+            view.setUint8(0, 0x49); // Little endian
+            view.setUint8(1, 0x49);
+            view.setUint16(2, 42, true);
+            view.setUint32(4, headerSize, true);
+
+            let offset = headerSize;
+
+            // Number of directory entries
+            view.setUint16(offset, numEntries, true);
+            offset += 2;
+
+            function writeIFDEntry(tag, type, count, value) {
+                view.setUint16(offset, tag, true);
+                view.setUint16(offset + 2, type, true);
+                view.setUint32(offset + 4, count, true);
+                view.setUint32(offset + 8, value, true);
+                offset += 12;
+            }
+
+            // Write IFD entries
+            writeIFDEntry(256, 4, 1, width);              // ImageWidth
+            writeIFDEntry(257, 4, 1, height);             // ImageLength
+            writeIFDEntry(258, 3, 1, 8);                  // BitsPerSample
+            writeIFDEntry(259, 3, 1, 7);                  // Compression (JPEG)
+            writeIFDEntry(262, 3, 1, 6);                  // PhotometricInterpretation (YCbCr)
+            writeIFDEntry(273, 4, 1, jpegOffset);         // StripOffsets
+            writeIFDEntry(277, 3, 1, 3);                  // SamplesPerPixel
+            writeIFDEntry(278, 4, 1, height);             // RowsPerStrip
+            writeIFDEntry(279, 4, 1, jpegData.length);    // StripByteCounts
+            writeIFDEntry(282, 5, 1, xResOffset);         // XResolution
+            writeIFDEntry(283, 5, 1, yResOffset);         // YResolution
+            writeIFDEntry(284, 3, 1, 1);                  // PlanarConfiguration
+            writeIFDEntry(296, 3, 1, 2);                  // ResolutionUnit (inches)
+            writeIFDEntry(529, 5, 3, ycbcrCoeffOffset);   // YCbCrCoefficients
+            
+            // YCbCrSubSampling - store inline (2 shorts)
+            const subsamplingValue = (2 << 16) | 2; // 2,2 for 4:2:0
+            writeIFDEntry(530, 3, 2, subsamplingValue);   // YCbCrSubSampling
+            
+            writeIFDEntry(531, 3, 1, 1);                  // YCbCrPositioning (centered)
+            writeIFDEntry(532, 5, 6, refBWOffset);        // ReferenceBlackWhite
+
+            // Next IFD offset (0 = no more IFDs)
+            view.setUint32(offset, 0, true);
+
+            // Write XResolution rational (dpi/1)
+            view.setUint32(xResOffset, dpi, true);
+            view.setUint32(xResOffset + 4, 1, true);
+
+            // Write YResolution rational (dpi/1)
+            view.setUint32(yResOffset, dpi, true);
+            view.setUint32(yResOffset + 4, 1, true);
+
+            // Write YCbCrCoefficients (ITU-R BT.601)
+            // [299/1000, 587/1000, 114/1000]
+            view.setUint32(ycbcrCoeffOffset, 299, true);
+            view.setUint32(ycbcrCoeffOffset + 4, 1000, true);
+            view.setUint32(ycbcrCoeffOffset + 8, 587, true);
+            view.setUint32(ycbcrCoeffOffset + 12, 1000, true);
+            view.setUint32(ycbcrCoeffOffset + 16, 114, true);
+            view.setUint32(ycbcrCoeffOffset + 20, 1000, true);
+
+            // Write ReferenceBlackWhite
+            // [0, 255, 0, 255, 0, 255] as rationals
+            for (let i = 0; i < 3; i++) {
+                view.setUint32(refBWOffset + i * 16, 0, true);
+                view.setUint32(refBWOffset + i * 16 + 4, 1, true);
+                view.setUint32(refBWOffset + i * 16 + 8, 255, true);
+                view.setUint32(refBWOffset + i * 16 + 12, 1, true);
+            }
+
+            // Copy JPEG data
+            bytes.set(jpegData, jpegOffset);
+
+            return bytes;
+        }
+    </script>
+</body>
+</html>
