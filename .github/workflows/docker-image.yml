@@ -31,6 +31,13 @@ jobs:
     
     - name: Build and push Docker image
       run: |
-        IMAGE_TAG=${{ env.REGISTRY }}/${{ steps.lowercase.outputs.username }}/${{ github.event.repository.name }}:$(date +%s)
-        docker build . --file Dockerfile --tag $IMAGE_TAG
+        IMAGE_BASE=${{ env.REGISTRY }}/${{ steps.lowercase.outputs.username }}/${{ github.event.repository.name }}
+        IMAGE_TAG=${IMAGE_BASE}:$(date +%s)
+        IMAGE_LATEST=${IMAGE_BASE}:latest
+        
+        # Build with timestamp tag
+        docker build . --file Dockerfile --tag $IMAGE_TAG --tag $IMAGE_LATEST
+        
+        # Push both tags
         docker push $IMAGE_TAG
+        docker push $IMAGE_LATEST
